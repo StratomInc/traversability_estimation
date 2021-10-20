@@ -9,20 +9,20 @@
 #ifndef STEPFILTER_HPP
 #define STEPFILTER_HPP
 
-#include <filters/filter_base.h>
+#include <rclcpp/rclcpp.hpp>
+#include <filters/filter_base.hpp>
 
 #include <string>
 
-namespace filters {
-
+namespace filters
+{
 /*!
  * Step Filter class to compute the step traversability value of an elevation map.
  */
-template<typename T>
+template <typename T>
 class StepFilter : public FilterBase<T>
 {
-
- public:
+public:
   /*!
    * Constructor
    */
@@ -48,8 +48,7 @@ class StepFilter : public FilterBase<T>
    */
   virtual bool update(const T& mapIn, T& mapOut);
 
- private:
-
+private:
   //! Maximum allowed step.
   double criticalValue_;
 
@@ -61,8 +60,10 @@ class StepFilter : public FilterBase<T>
 
   //! Step map type.
   std::string type_;
+
+  rclcpp::Logger logger_;
 };
 
-} /* namespace */
+}  // namespace filters
 
 #endif

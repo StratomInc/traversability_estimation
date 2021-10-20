@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<package>
+<package format="3">
   <name>traversability_msgs</name>
   <version>0.4.0</version>
   <description>ROS Message definitions for traversability estimation/checking.</description>
@@ -9,13 +9,13 @@
   <url type="website">https://github.com/ethz-asl/traversability_estimation</url>
   <url type="bugtracker">https://github.com/ethz-asl/traversability_estimation/issues</url>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
   
-  <build_depend>geometry_msgs</build_depend>
-  <build_depend>message_generation</build_depend>
+  <depend>geometry_msgs</depend>
   
-  <run_depend>geometry_msgs</run_depend>
-
   <export>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

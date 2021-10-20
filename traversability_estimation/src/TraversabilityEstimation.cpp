@@ -7,102 +7,153 @@
  */
 
 #include "traversability_estimation/TraversabilityEstimation.hpp"
-#include "traversability_estimation/common.h"
-#include <traversability_msgs/TraversabilityResult.h>
-#include <param_io/get_param.hpp>
+
+#include <traversability_msgs/msg/traversability_result.hpp>
 
 // ROS
-#include <geometry_msgs/Pose.h>
-#include <ros/package.h>
+#include <geometry_msgs/msg/pose.hpp>
+
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 using namespace std;
 
-namespace traversability_estimation {
+namespace traversability_estimation
+{
+TraversabilityEstimation::TraversabilityEstimation(const rclcpp::NodeOptions& options,
+                                                   const std::string& name)
+  : rclcpp::Node(name, options)
+  , acceptGridMapToInitTraversabilityMap_(false)
+  , traversabilityType_("traversability")
+  , slopeType_("traversability_slope")
+  , stepType_("traversability_step")
+  , roughnessType_("traversability_roughness")
+  , robotSlopeType_("robot_slope")
+  , getImageCallback_(false)
+  , useRawMap_(false)
+{
+  RCLCPP_DEBUG(this->get_logger(), "Traversability estimation node started.");
+  initTimer_ = this->create_wall_timer(std::chrono::duration<double>(0.1),
+                                       std::bind(&TraversabilityEstimation::init, this));
+}
 
-TraversabilityEstimation::TraversabilityEstimation(ros::NodeHandle& nodeHandle)
-    : nodeHandle_(nodeHandle),
-      acceptGridMapToInitTraversabilityMap_(false),
-      traversabilityMap_(nodeHandle),
-      traversabilityType_("traversability"),
-      slopeType_("traversability_slope"),
-      stepType_("traversability_step"),
-      roughnessType_("traversability_roughness"),
-      robotSlopeType_("robot_slope"),
-      getImageCallback_(false),
-      useRawMap_(false) {
-  ROS_DEBUG("Traversability estimation node started.");
+TraversabilityEstimation::~TraversabilityEstimation()
+{
+  if (!updateTimer_)
+  {
+    updateTimer_->cancel();
+  }
+}
+
+void TraversabilityEstimation::init()
+{
+  initTimer_->cancel();
+
+  traversabilityMap_ = std::make_unique<TraversabilityMap>(this->shared_from_this());
+
+  callback_group_ =
+      this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive, false);
+  callback_group_executor_.add_callback_group(callback_group_, this->get_node_base_interface());
+
   readParameters();
-  traversabilityMap_.createLayers(useRawMap_);
-  submapClient_ = nodeHandle_.serviceClient<grid_map_msgs::GetGridMap>(submapServiceName_);
+  traversabilityMap_->createLayers(useRawMap_);
+  submapClient_ = this->create_client<grid_map_msgs::srv::GetGridMap>(
+      submapServiceName_, rmw_qos_profile_services_default, callback_group_);
 
-  if (!updateDuration_.isZero()) {
-    updateTimer_ = nodeHandle_.createTimer(updateDuration_, &TraversabilityEstimation::updateTimerCallback, this);
-  } else {
-    ROS_WARN("Update rate is zero. No traversability map will be published.");
+  if (dt_ > 0)
+  {
+    updateTimer_ =
+        this->create_wall_timer(std::chrono::duration<double>(dt_),
+                                std::bind(&TraversabilityEstimation::updateTimerCallback, this));
+  }
+  else
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "Update rate is zero. No traversability map will be published.");
   }
 
-  loadElevationMapService_ = nodeHandle_.advertiseService("load_elevation_map", &TraversabilityEstimation::loadElevationMap, this);
-  updateTraversabilityService_ =
-      nodeHandle_.advertiseService("update_traversability", &TraversabilityEstimation::updateServiceCallback, this);
-  getTraversabilityService_ = nodeHandle_.advertiseService("get_traversability", &TraversabilityEstimation::getTraversabilityMap, this);
-  footprintPathService_ = nodeHandle_.advertiseService("check_footprint_path", &TraversabilityEstimation::checkFootprintPath, this);
-  updateParameters_ = nodeHandle_.advertiseService("update_parameters", &TraversabilityEstimation::updateParameter, this);
-  traversabilityFootprint_ =
-      nodeHandle_.advertiseService("traversability_footprint", &TraversabilityEstimation::traversabilityFootprint, this);
-  saveToBagService_ = nodeHandle_.advertiseService("save_traversability_map_to_bag", &TraversabilityEstimation::saveToBag, this);
-  imageSubscriber_ = nodeHandle_.subscribe(imageTopic_, 1, &TraversabilityEstimation::imageCallback, this);
+  loadElevationMapService_ = this->create_service<grid_map_msgs::srv::ProcessFile>(
+      "load_elevation_map", std::bind(&TraversabilityEstimation::loadElevationMap, this,
+                                      std::placeholders::_1, std::placeholders::_2));
+  updateTraversabilityService_ = this->create_service<grid_map_msgs::srv::GetGridMapInfo>(
+      "update_traversability", std::bind(&TraversabilityEstimation::updateServiceCallback, this,
+                                         std::placeholders::_1, std::placeholders::_2));
+  getTraversabilityService_ = this->create_service<grid_map_msgs::srv::GetGridMap>(
+      "get_traversability", std::bind(&TraversabilityEstimation::getTraversabilityMap, this,
+                                      std::placeholders::_1, std::placeholders::_2));
+  footprintPathService_ = this->create_service<traversability_msgs::srv::CheckFootprintPath>(
+      "check_footprint_path", std::bind(&TraversabilityEstimation::checkFootprintPath, this,
+                                        std::placeholders::_1, std::placeholders::_2));
+  updateParameters_ = this->create_service<std_srvs::srv::Empty>(
+      "update_parameters", std::bind(&TraversabilityEstimation::updateParameter, this,
+                                     std::placeholders::_1, std::placeholders::_2));
+  traversabilityFootprint_ = this->create_service<std_srvs::srv::Empty>(
+      "traversability_footprint", std::bind(&TraversabilityEstimation::traversabilityFootprint,
+                                            this, std::placeholders::_1, std::placeholders::_2));
+  saveToBagService_ = this->create_service<grid_map_msgs::srv::ProcessFile>(
+      "save_traversability_map_to_bag", std::bind(&TraversabilityEstimation::saveToBag, this,
+                                                  std::placeholders::_1, std::placeholders::_2));
+  imageSubscriber_ = this->create_subscription<sensor_msgs::msg::Image>(
+      imageTopic_, 1,
+      std::bind(&TraversabilityEstimation::imageCallback, this, std::placeholders::_1));
 
-  if (acceptGridMapToInitTraversabilityMap_) {
-    gridMapToInitTraversabilityMapSubscriber_ = nodeHandle_.subscribe(
-        gridMapToInitTraversabilityMapTopic_, 1, &TraversabilityEstimation::gridMapToInitTraversabilityMapCallback, this);
+  if (acceptGridMapToInitTraversabilityMap_)
+  {
+    gridMapToInitTraversabilityMapSubscriber_ =
+        this->create_subscription<grid_map_msgs::msg::GridMap>(
+            gridMapToInitTraversabilityMapTopic_, 1,
+            std::bind(&TraversabilityEstimation::gridMapToInitTraversabilityMapCallback, this,
+                      std::placeholders::_1));
   }
 
   elevationMapLayers_.push_back("elevation");
-  if (!useRawMap_) {
+  if (!useRawMap_)
+  {
     elevationMapLayers_.push_back("upper_bound");
     elevationMapLayers_.push_back("lower_bound");
-  } else {
+  }
+  else
+  {
     elevationMapLayers_.push_back("variance");
     elevationMapLayers_.push_back("horizontal_variance_x");
     elevationMapLayers_.push_back("horizontal_variance_y");
     elevationMapLayers_.push_back("horizontal_variance_xy");
     elevationMapLayers_.push_back("time");
   }
+
+  transformBuffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+  transformListener_ = std::make_unique<tf2_ros::TransformListener>(*transformBuffer_);
+
+  spinner_ = std::make_unique<std::thread>([this]() { callback_group_executor_.spin(); });
 }
 
-TraversabilityEstimation::~TraversabilityEstimation() {
-  updateTimer_.stop();
-  nodeHandle_.shutdown();
-}
-
-bool TraversabilityEstimation::readParameters() {
+void TraversabilityEstimation::readParameters()
+{
   // Read boolean to switch between raw and fused map.
-  useRawMap_ = param_io::param<bool>(nodeHandle_, "use_raw_map", false);
+  useRawMap_ = this->declare_parameter("use_raw_map", false);
 
-  submapServiceName_ = param_io::param<std::string>(nodeHandle_, "submap_service", "/get_grid_map");
+  submapServiceName_ = this->declare_parameter("submap_service", "/get_grid_map");
 
   double updateRate;
-  updateRate = param_io::param(nodeHandle_, "min_update_rate", 1.0);
-  if (updateRate != 0.0) {
-    updateDuration_.fromSec(1.0 / updateRate);
-  } else {
-    updateDuration_.fromSec(0.0);
+  updateRate = this->declare_parameter("min_update_rate", 1.0);
+  if (updateRate != 0.0)
+  {
+    dt_ = 1.0 / updateRate;
   }
   // Read parameters for image subscriber.
-  imageTopic_ = param_io::param<std::string>(nodeHandle_, "image_topic", "/image_elevation");
-  imageResolution_ = param_io::param(nodeHandle_, "resolution", 0.03);
-  imageMinHeight_ = param_io::param(nodeHandle_, "min_height", 0.0);
-  imageMaxHeight_ = param_io::param(nodeHandle_, "max_height", 1.0);
-  imagePosition_.x() = param_io::param(nodeHandle_, "image_position_x", 0.0);
-  imagePosition_.y() = param_io::param(nodeHandle_, "image_position_y", 0.0);
+  imageTopic_ = this->declare_parameter("image_topic", "/image_elevation");
+  imageResolution_ = this->declare_parameter("resolution", 0.03);
+  imageMinHeight_ = this->declare_parameter("min_height", 0.0);
+  imageMaxHeight_ = this->declare_parameter("max_height", 1.0);
+  imagePosition_.x() = this->declare_parameter("image_position_x", 0.0);
+  imagePosition_.y() = this->declare_parameter("image_position_y", 0.0);
 
-  robotFrameId_ = param_io::param<std::string>(nodeHandle_, "robot_frame_id", "robot");
-  robot_ = param_io::param<std::string>(nodeHandle_, "robot", "robot");
-  package_ = param_io::param<std::string>(nodeHandle_, "package", "traversability_estimation");
+  robotFrameId_ = this->declare_parameter("robot_frame_id", "robot");
+  robot_ = this->declare_parameter("robot", "robot");
+  package_ = this->declare_parameter("package", "traversability_estimation");
 
   grid_map::Position mapCenter;
-  mapCenter.x() = param_io::param(nodeHandle_, "map_center_x", 0.0);
-  mapCenter.y() = param_io::param(nodeHandle_, "map_center_y", 0.0);
+  mapCenter.x() = this->declare_parameter("map_center_x", 0.0);
+  mapCenter.y() = this->declare_parameter("map_center_y", 0.0);
 
   submapPoint_.header.frame_id = robotFrameId_;
   submapPoint_.point.x = mapCenter.x();
@@ -110,269 +161,338 @@ bool TraversabilityEstimation::readParameters() {
   submapPoint_.point.y = mapCenter.y();
 
   submapPoint_.point.z = 0.0;
-  mapLength_.x() = param_io::param(nodeHandle_, "map_length_x", 5.0);
-  mapLength_.y() = param_io::param(nodeHandle_, "map_length_y", 5.0);
-  footprintYaw_ = param_io::param(nodeHandle_, "footprint_yaw", M_PI_2);
+  mapLength_.x() = this->declare_parameter("map_length_x", 5.0);
+  mapLength_.y() = this->declare_parameter("map_length_y", 5.0);
+  footprintYaw_ = this->declare_parameter("footprint_yaw", M_PI_2);
 
   // Grid map to initialize elevation layer
-  acceptGridMapToInitTraversabilityMap_ = param_io::param<bool>(nodeHandle_, "grid_map_to_initialize_traversability_map/enable", false);
-  gridMapToInitTraversabilityMapTopic_ =
-      param_io::param<std::string>(nodeHandle_, "grid_map_to_initialize_traversability_map/grid_map_topic_name", "initial_elevation_map");
-
-  return true;
+  acceptGridMapToInitTraversabilityMap_ =
+      this->declare_parameter("grid_map_to_initialize_traversability_map.enable", false);
+  gridMapToInitTraversabilityMapTopic_ = this->declare_parameter(
+      "grid_map_to_initialize_traversability_map.grid_map_topic_name", "initial_elevation_map");
 }
 
-bool TraversabilityEstimation::loadElevationMap(grid_map_msgs::ProcessFile::Request& request,
-                                                grid_map_msgs::ProcessFile::Response& response) {
-  ROS_INFO("TraversabilityEstimation: loadElevationMap");
-  if (request.file_path.empty() || request.topic_name.empty()) {
-    ROS_WARN("Fields 'file_path' and 'topic_name' in service request must be filled in.");
-    response.success = static_cast<unsigned char>(false);
+bool TraversabilityEstimation::loadElevationMap(
+    const grid_map_msgs::srv::ProcessFile::Request::SharedPtr request,
+    grid_map_msgs::srv::ProcessFile::Response::SharedPtr response)
+{
+  RCLCPP_INFO(this->get_logger(), "TraversabilityEstimation: loadElevationMap");
+  if (request->file_path.empty() || request->topic_name.empty())
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "Fields 'file_path' and 'topic_name' in service request must be filled in.");
+    response->success = static_cast<unsigned char>(false);
     return true;
   }
 
   grid_map::GridMap map;
-  if (!grid_map::GridMapRosConverter::loadFromBag(request.file_path, request.topic_name, map)) {
-    ROS_ERROR("TraversabilityEstimation: Cannot find bag '%s' or topic '%s' of the elevation map!", request.file_path.c_str(),
-              request.topic_name.c_str());
-    response.success = static_cast<unsigned char>(false);
-  } else {
-    map.setTimestamp(ros::Time::now().toNSec());
-    if (!initializeTraversabilityMapFromGridMap(map)) {
-      ROS_ERROR(
-          "TraversabilityEstimation: loadElevationMap: it was not possible to load elevation map from bag with path '%s' and topic '%s'.",
-          request.file_path.c_str(), request.topic_name.c_str());
-      response.success = static_cast<unsigned char>(false);
-    } else {
-      response.success = static_cast<unsigned char>(true);
+  if (!grid_map::GridMapRosConverter::loadFromBag(request->file_path, request->topic_name, map))
+  {
+    RCLCPP_ERROR(
+        this->get_logger(),
+        "TraversabilityEstimation: Cannot find bag '%s' or topic '%s' of the elevation map!",
+        request->file_path.c_str(), request->topic_name.c_str());
+    response->success = static_cast<unsigned char>(false);
+  }
+  else
+  {
+    map.setTimestamp(this->now().nanoseconds());
+    if (!initializeTraversabilityMapFromGridMap(map))
+    {
+      RCLCPP_ERROR(this->get_logger(),
+                   "TraversabilityEstimation: loadElevationMap: it was not possible to load "
+                   "elevation map from bag with path '%s' and topic '%s'.",
+                   request->file_path.c_str(), request->topic_name.c_str());
+      response->success = static_cast<unsigned char>(false);
+    }
+    else
+    {
+      response->success = static_cast<unsigned char>(true);
     }
   }
 
   return true;
 }
 
-void TraversabilityEstimation::imageCallback(const sensor_msgs::Image& image) {
-  if (!getImageCallback_) {
-    grid_map::GridMapRosConverter::initializeFromImage(image, imageResolution_, imageGridMap_, imagePosition_);
-    ROS_INFO("Initialized map with size %f x %f m (%i x %i cells).", imageGridMap_.getLength().x(), imageGridMap_.getLength().y(),
-             imageGridMap_.getSize()(0), imageGridMap_.getSize()(1));
+void TraversabilityEstimation::imageCallback(const sensor_msgs::msg::Image::SharedPtr image)
+{
+  if (!getImageCallback_)
+  {
+    grid_map::GridMapRosConverter::initializeFromImage(*image, imageResolution_, imageGridMap_,
+                                                       imagePosition_);
+    RCLCPP_INFO(this->get_logger(), "Initialized map with size %f x %f m (%i x %i cells).",
+                imageGridMap_.getLength().x(), imageGridMap_.getLength().y(),
+                imageGridMap_.getSize()(0), imageGridMap_.getSize()(1));
     imageGridMap_.add("upper_bound", 0.0);  // TODO: Add value for layers.
     imageGridMap_.add("lower_bound", 0.0);
-    imageGridMap_.add("uncertainty_range", imageGridMap_.get("upper_bound") - imageGridMap_.get("lower_bound"));
+    imageGridMap_.add("uncertainty_range",
+                      imageGridMap_.get("upper_bound") - imageGridMap_.get("lower_bound"));
     getImageCallback_ = true;
   }
-  grid_map::GridMapRosConverter::addLayerFromImage(image, "elevation", imageGridMap_, imageMinHeight_, imageMaxHeight_);
-  grid_map_msgs::GridMap elevationMap;
-  grid_map::GridMapRosConverter::toMessage(imageGridMap_, elevationMap);
-  traversabilityMap_.setElevationMap(elevationMap);
+  grid_map::GridMapRosConverter::addLayerFromImage(*image, "elevation", imageGridMap_,
+                                                   imageMinHeight_, imageMaxHeight_);
+  auto elevationMap = grid_map::GridMapRosConverter::toMessage(imageGridMap_);
+  traversabilityMap_->setElevationMap(*elevationMap);
 }
 
-void TraversabilityEstimation::updateTimerCallback(const ros::TimerEvent& timerEvent) { updateTraversability(); }
+void TraversabilityEstimation::updateTimerCallback()
+{
+  updateTraversability();
+}
 
-bool TraversabilityEstimation::updateServiceCallback(grid_map_msgs::GetGridMapInfo::Request&,
-                                                     grid_map_msgs::GetGridMapInfo::Response& response) {
-  if (updateDuration_.isZero()) {
-    if (!updateTraversability()) {
-      ROS_ERROR("Traversability Estimation: Cannot update traversability!");
+bool TraversabilityEstimation::updateServiceCallback(
+    const grid_map_msgs::srv::GetGridMapInfo::Request::SharedPtr,
+    grid_map_msgs::srv::GetGridMapInfo::Response::SharedPtr response)
+{
+  if (!dt_)
+  {
+    if (!updateTraversability())
+    {
+      RCLCPP_ERROR(this->get_logger(), "Traversability Estimation: Cannot update traversability!");
       return false;
     }
   }
   // Wait until traversability map is computed.
-  while (!traversabilityMap_.traversabilityMapInitialized()) {
-    sleep(1.0);
+  while (!traversabilityMap_->traversabilityMapInitialized())
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
-  grid_map_msgs::GridMap msg;
-  grid_map::GridMap traversabilityMap = traversabilityMap_.getTraversabilityMap();
+  grid_map_msgs::msg::GridMap msg;
+  grid_map::GridMap traversabilityMap = traversabilityMap_->getTraversabilityMap();
 
-  response.info.header.frame_id = traversabilityMap_.getMapFrameId();
-  response.info.header.stamp = ros::Time::now();
-  response.info.resolution = traversabilityMap.getResolution();
-  response.info.length_x = traversabilityMap.getLength()[0];
-  response.info.length_y = traversabilityMap.getLength()[1];
-  geometry_msgs::Pose pose;
+  response->info.resolution = traversabilityMap.getResolution();
+  response->info.length_x = traversabilityMap.getLength()[0];
+  response->info.length_y = traversabilityMap.getLength()[1];
+  geometry_msgs::msg::Pose pose;
   grid_map::Position position = traversabilityMap.getPosition();
   pose.position.x = position[0];
   pose.position.y = position[1];
   pose.orientation.w = 1.0;
-  response.info.pose = pose;
+  response->info.pose = pose;
 
   return true;
 }
 
-bool TraversabilityEstimation::updateTraversability() {
-  grid_map_msgs::GridMap elevationMap;
-  if (!getImageCallback_) {
-    ROS_DEBUG("Sending request to %s.", submapServiceName_.c_str());
-    if (!submapClient_.waitForExistence(ros::Duration(2.0))) {
+bool TraversabilityEstimation::updateTraversability()
+{
+  grid_map_msgs::msg::GridMap elevationMap;
+  if (!getImageCallback_)
+  {
+    RCLCPP_DEBUG(this->get_logger(), "Sending request to %s.", submapServiceName_.c_str());
+    if (!submapClient_->wait_for_service(std::chrono::seconds(2)))
+    {
       return false;
     }
-    ROS_DEBUG("Sending request to %s.", submapServiceName_.c_str());
-    if (requestElevationMap(elevationMap)) {
-      traversabilityMap_.setElevationMap(elevationMap);
-      if (!traversabilityMap_.computeTraversability()) return false;
-    } else {
-      ROS_WARN_THROTTLE(periodThrottledConsoleMessages, "Failed to retrieve elevation grid map.");
+    RCLCPP_DEBUG(this->get_logger(), "Sending request to %s.", submapServiceName_.c_str());
+    if (requestElevationMap(elevationMap))
+    {
+      traversabilityMap_->setElevationMap(elevationMap);
+      if (!traversabilityMap_->computeTraversability())
+        return false;
+    }
+    else
+    {
+      RCLCPP_WARN(this->get_logger(), "Failed to retrieve elevation grid map.");
       return false;
     }
-  } else {
-    if (!traversabilityMap_.computeTraversability()) return false;
   }
+  else
+  {
+    if (!traversabilityMap_->computeTraversability())
+      return false;
+  }
+  return true;
+}
+
+bool TraversabilityEstimation::updateParameter(const std_srvs::srv::Empty::Request::SharedPtr,
+                                               std_srvs::srv::Empty::Response::SharedPtr)
+{
+  if (!traversabilityMap_->updateFilter())
+    return false;
 
   return true;
 }
 
-bool TraversabilityEstimation::updateParameter(std_srvs::Empty::Request&, std_srvs::Empty::Response&) {
-  // Load parameters file.
-  string path = ros::package::getPath(package_);
-  string path_filter_parameter = path + "/config/" + robot_ + "_filter_parameter.yaml";
-  string path_footprint_parameter = path + "/config/" + robot_ + "_footprint_parameter.yaml";
-  // Filter parameters
-  string commandString = "rosparam load " + path_filter_parameter + " /traversability_estimation";
-  const char* command_filter = commandString.c_str();
-  if (system(command_filter) != 0) {
-    ROS_ERROR("Can't update parameter.");
-    return false;
+bool TraversabilityEstimation::requestElevationMap(grid_map_msgs::msg::GridMap& map)
+{
+  submapPoint_.header.stamp = this->now();
+  geometry_msgs::msg::PointStamped submapPointTransformed;
+
+  try
+  {
+    auto transform = transformBuffer_->lookupTransform(
+        traversabilityMap_->getMapFrameId(), submapPoint_.header.frame_id, tf2::TimePointZero);
+    tf2::doTransform(submapPoint_, submapPointTransformed, transform);
   }
-  // Footprint parameters.
-  commandString = "rosparam load " + path_footprint_parameter + " /traversability_estimation";
-  const char* command_footprint = commandString.c_str();
-  if (system(command_footprint) != 0) {
-    ROS_ERROR("Can't update parameter.");
-    return false;
-  }
-
-  if (!traversabilityMap_.updateFilter()) return false;
-  return true;
-}
-
-bool TraversabilityEstimation::requestElevationMap(grid_map_msgs::GridMap& map) {
-  submapPoint_.header.stamp = ros::Time(0);
-  geometry_msgs::PointStamped submapPointTransformed;
-
-  try {
-    transformListener_.transformPoint(traversabilityMap_.getMapFrameId(), submapPoint_, submapPointTransformed);
-  } catch (tf::TransformException& ex) {
-    ROS_ERROR("%s", ex.what());
+  catch (const tf2::TransformException& ex)
+  {
+    RCLCPP_ERROR(this->get_logger(), "%s", ex.what());
     return false;
   }
 
-  grid_map_msgs::GetGridMap submapService;
-  submapService.request.position_x = submapPointTransformed.point.x;
-  submapService.request.position_y = submapPointTransformed.point.y;
-  submapService.request.length_x = mapLength_.x();
-  submapService.request.length_y = mapLength_.y();
-  submapService.request.layers = elevationMapLayers_;
+  auto submapService = std::make_shared<grid_map_msgs::srv::GetGridMap::Request>();
+  submapService->position_x = submapPointTransformed.point.x;
+  submapService->position_y = submapPointTransformed.point.y;
+  submapService->length_x = mapLength_.x();
+  submapService->length_y = mapLength_.y();
+  submapService->layers = elevationMapLayers_;
 
-  if (!submapClient_.call(submapService)) return false;
-  map = submapService.response.map;
+  auto fut = submapClient_->async_send_request(submapService);
+  const auto status = fut.wait_for(std::chrono::seconds(2));
+  if (std::future_status::ready != status)
+    return false;
+
+  auto result = fut.get();
+  map = result->map;
+  return true;
+}
+
+bool TraversabilityEstimation::traversabilityFootprint(
+    const std_srvs::srv::Empty::Request::SharedPtr /*request*/,
+    std_srvs::srv::Empty::Response::SharedPtr /*response*/)
+{
+  if (!traversabilityMap_->traversabilityFootprint(footprintYaw_))
+    return false;
 
   return true;
 }
 
-bool TraversabilityEstimation::traversabilityFootprint(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response) {
-  if (!traversabilityMap_.traversabilityFootprint(footprintYaw_)) return false;
-
-  return true;
-}
-
-bool TraversabilityEstimation::checkFootprintPath(traversability_msgs::CheckFootprintPath::Request& request,
-                                                  traversability_msgs::CheckFootprintPath::Response& response) {
-  const int nPaths = request.path.size();
-  if (nPaths == 0) {
-    ROS_WARN_THROTTLE(periodThrottledConsoleMessages, "No footprint path available to check!");
+bool TraversabilityEstimation::checkFootprintPath(
+    const traversability_msgs::srv::CheckFootprintPath::Request::SharedPtr request,
+    traversability_msgs::srv::CheckFootprintPath::Response::SharedPtr response)
+{
+  const int nPaths = request->path.size();
+  if (nPaths == 0)
+  {
+    RCLCPP_WARN(this->get_logger(), "No footprint path available to check!");
     return false;
   }
 
-  traversability_msgs::TraversabilityResult result;
-  traversability_msgs::FootprintPath path;
-  for (int j = 0; j < nPaths; j++) {
-    path = request.path[j];
-    if (!traversabilityMap_.checkFootprintPath(path, result, true)) return false;
-    response.result.push_back(result);
+  for (int j = 0; j < nPaths; j++)
+  {
+    auto result = std::make_shared<traversability_msgs::msg::TraversabilityResult>();
+    auto path = std::make_shared<traversability_msgs::msg::FootprintPath>(request->path[j]);
+    if (!traversabilityMap_->checkFootprintPath(path, result, true))
+      return false;
+
+    response->result.push_back(*result);
   }
 
   return true;
 }
 
-bool TraversabilityEstimation::getTraversabilityMap(grid_map_msgs::GetGridMap::Request& request,
-                                                    grid_map_msgs::GetGridMap::Response& response) {
-  grid_map::Position requestedSubmapPosition(request.position_x, request.position_y);
-  grid_map::Length requestedSubmapLength(request.length_x, request.length_y);
-  grid_map_msgs::GridMap msg;
+bool TraversabilityEstimation::getTraversabilityMap(
+    const grid_map_msgs::srv::GetGridMap::Request::SharedPtr request,
+    grid_map_msgs::srv::GetGridMap::Response::SharedPtr response)
+{
+  grid_map::Position requestedSubmapPosition(request->position_x, request->position_y);
+  grid_map::Length requestedSubmapLength(request->length_x, request->length_y);
+  grid_map_msgs::msg::GridMap msg;
   grid_map::GridMap map, subMap;
-  map = traversabilityMap_.getTraversabilityMap();
+  map = traversabilityMap_->getTraversabilityMap();
   bool isSuccess;
   subMap = map.getSubmap(requestedSubmapPosition, requestedSubmapLength, isSuccess);
-  if (request.layers.empty()) {
-    grid_map::GridMapRosConverter::toMessage(subMap, response.map);
-  } else {
+  if (request->layers.empty())
+  {
+    auto result_map = grid_map::GridMapRosConverter::toMessage(subMap);
+    response->map = *result_map;
+  }
+  else
+  {
     vector<string> layers;
-    for (const auto& layer : request.layers) {
+    for (const auto& layer : request->layers)
+    {
       layers.push_back(layer);
     }
-    grid_map::GridMapRosConverter::toMessage(subMap, layers, response.map);
+    auto result_map = grid_map::GridMapRosConverter::toMessage(subMap, layers);
+    response->map = *result_map;
   }
   return isSuccess;
 }
 
-bool TraversabilityEstimation::saveToBag(grid_map_msgs::ProcessFile::Request& request, grid_map_msgs::ProcessFile::Response& response) {
-  ROS_INFO("Save to bag.");
-  if (request.file_path.empty() || request.topic_name.empty()) {
-    ROS_WARN("Fields 'file_path' and 'topic_name' in service request must be filled in.");
-    response.success = static_cast<unsigned char>(false);
+bool TraversabilityEstimation::saveToBag(
+    const grid_map_msgs::srv::ProcessFile::Request::SharedPtr request,
+    grid_map_msgs::srv::ProcessFile::Response::SharedPtr response)
+{
+  RCLCPP_INFO(this->get_logger(), "Save to bag.");
+  if (request->file_path.empty() || request->topic_name.empty())
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "Fields 'file_path' and 'topic_name' in service request must be filled in.");
+    response->success = static_cast<unsigned char>(false);
     return true;
   }
 
-  response.success = static_cast<unsigned char>(
-      grid_map::GridMapRosConverter::saveToBag(traversabilityMap_.getTraversabilityMap(), request.file_path, request.topic_name));
+  response->success = static_cast<unsigned char>(grid_map::GridMapRosConverter::saveToBag(
+      traversabilityMap_->getTraversabilityMap(), request->file_path, request->topic_name));
   return true;
 }
 
-bool TraversabilityEstimation::initializeTraversabilityMapFromGridMap(const grid_map::GridMap& gridMap) {
-  if (traversabilityMap_.traversabilityMapInitialized()) {
-    ROS_WARN(
-        "[TraversabilityEstimation::gridMapToInitTraversabilityMapCallback]: received grid map message cannot be used to initialize"
-        " the traversability map, because current traversability map has been already initialized.");
+bool TraversabilityEstimation::initializeTraversabilityMapFromGridMap(
+    const grid_map::GridMap& gridMap)
+{
+  if (traversabilityMap_->traversabilityMapInitialized())
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "[TraversabilityEstimation::gridMapToInitTraversabilityMapCallback]: received grid "
+                "map message cannot be used to initialize"
+                " the traversability map, because current traversability map has been already "
+                "initialized.");
     return false;
   }
 
   grid_map::GridMap mapWithCheckedLayers = gridMap;
-  for (const auto& layer : elevationMapLayers_) {
-    if (!mapWithCheckedLayers.exists(layer)) {
+  for (const auto& layer : elevationMapLayers_)
+  {
+    if (!mapWithCheckedLayers.exists(layer))
+    {
       mapWithCheckedLayers.add(layer, 0.0);
-      ROS_INFO_STREAM("[TraversabilityEstimation::initializeTraversabilityMapFromGridMap]: Added layer '" << layer << "'.");
+      RCLCPP_INFO_STREAM(
+          this->get_logger(),
+          "[TraversabilityEstimation::initializeTraversabilityMapFromGridMap]: Added layer '"
+              << layer << "'.");
     }
   }
-  ROS_DEBUG_STREAM("Map frame id: " << mapWithCheckedLayers.getFrameId());
-  for (const auto& layer : mapWithCheckedLayers.getLayers()) {
-    ROS_DEBUG_STREAM("Map layers: " << layer);
+  RCLCPP_DEBUG_STREAM(this->get_logger(), "Map frame id: " << mapWithCheckedLayers.getFrameId());
+  for (const auto& layer : mapWithCheckedLayers.getLayers())
+  {
+    RCLCPP_DEBUG_STREAM(this->get_logger(), "Map layers: " << layer);
   }
-  ROS_DEBUG_STREAM("Map size: " << mapWithCheckedLayers.getLength());
-  ROS_DEBUG_STREAM("Map position: " << mapWithCheckedLayers.getPosition());
-  ROS_DEBUG_STREAM("Map resolution: " << mapWithCheckedLayers.getResolution());
+  RCLCPP_DEBUG_STREAM(this->get_logger(), "Map size: " << mapWithCheckedLayers.getLength());
+  RCLCPP_DEBUG_STREAM(this->get_logger(), "Map position: " << mapWithCheckedLayers.getPosition());
+  RCLCPP_DEBUG_STREAM(this->get_logger(),
+                      "Map resolution: " << mapWithCheckedLayers.getResolution());
 
-  grid_map_msgs::GridMap message;
-  grid_map::GridMapRosConverter::toMessage(mapWithCheckedLayers, message);
-  traversabilityMap_.setElevationMap(message);
-  if (!traversabilityMap_.computeTraversability()) {
-    ROS_WARN("TraversabilityEstimation: initializeTraversabilityMapFromGridMap: cannot compute traversability.");
+  auto message = grid_map::GridMapRosConverter::toMessage(mapWithCheckedLayers);
+  traversabilityMap_->setElevationMap(*message);
+  if (!traversabilityMap_->computeTraversability())
+  {
+    RCLCPP_WARN(this->get_logger(),
+                "TraversabilityEstimation: initializeTraversabilityMapFromGridMap: cannot compute "
+                "traversability.");
     return false;
   }
   return true;
 }
 
-void TraversabilityEstimation::gridMapToInitTraversabilityMapCallback(const grid_map_msgs::GridMap& message) {
+void TraversabilityEstimation::gridMapToInitTraversabilityMapCallback(
+    const grid_map_msgs::msg::GridMap::SharedPtr message)
+{
   grid_map::GridMap gridMap;
-  grid_map::GridMapRosConverter::fromMessage(message, gridMap);
-  if (!initializeTraversabilityMapFromGridMap(gridMap)) {
-    ROS_ERROR(
+  grid_map::GridMapRosConverter::fromMessage(*message, gridMap);
+  if (!initializeTraversabilityMapFromGridMap(gridMap))
+  {
+    RCLCPP_ERROR(
+        this->get_logger(),
         "[TraversabilityEstimation::gridMapToInitTraversabilityMapCallback]: "
         "It was not possible to use received grid map message to initialize traversability map.");
-  } else {
-    ROS_INFO(
-        "[TraversabilityEstimation::gridMapToInitTraversabilityMapCallback]: "
-        "Traversability Map initialized using received grid map on topic '%s'.",
-        gridMapToInitTraversabilityMapTopic_.c_str());
+  }
+  else
+  {
+    RCLCPP_INFO(this->get_logger(),
+                "[TraversabilityEstimation::gridMapToInitTraversabilityMapCallback]: "
+                "Traversability Map initialized using received grid map on topic '%s'.",
+                gridMapToInitTraversabilityMapTopic_.c_str());
   }
 }
 

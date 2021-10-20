@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<package format="2">
+<package format="3">
   <name>traversability_estimation</name>
   <version>0.4.0</version>
   <description>ROS package for estimating traversability from elevation maps.</description>
@@ -11,25 +11,30 @@
   <url type="website">https://github.com/ethz-asl/traversability_estimation</url>
   <url type="bugtracker">https://github.com/ethz-asl/traversability_estimation/issues</url>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>roscpp</depend>
-  <depend>tf</depend>
-  <depend>tf_conversions</depend>
+  <depend>rclcpp</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
   <depend>grid_map_ros</depend>
   <depend>grid_map_core</depend>
   <depend>grid_map_msgs</depend>
   <depend>grid_map_filters</depend>
+  <depend>nav2_costmap_2d</depend>
   <depend>traversability_msgs</depend>
   <depend>traversability_estimation_filters</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>example_interfaces</depend>
   <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>param_io</depend>
   <depend>xmlrpcpp</depend>
-  <depend>cmake_modules</depend>
   <depend>kindr</depend>
   <build_export_depend>eigen</build_export_depend>
 
-
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 </package>

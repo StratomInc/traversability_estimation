@@ -11,38 +11,43 @@
 #include "traversability_estimation/TraversabilityMap.hpp"
 
 // Grid Map
-#include <grid_map_msgs/GetGridMap.h>
-#include <grid_map_msgs/GetGridMapInfo.h>
-#include <grid_map_msgs/ProcessFile.h>
+#include <grid_map_msgs/srv/get_grid_map.hpp>
+#include <grid_map_msgs/srv/get_grid_map_info.hpp>
+#include <grid_map_msgs/srv/process_file.hpp>
 #include <grid_map_ros/grid_map_ros.hpp>
 
 // Traversability estimation
-#include <traversability_msgs/CheckFootprintPath.h>
+#include <traversability_msgs/srv/check_footprint_path.hpp>
 
 // ROS
-#include <filters/filter_chain.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Image.h>
-#include <std_srvs/Empty.h>
-#include <tf/transform_listener.h>
+#include <sensor_msgs/msg/image.hpp>
+#include <std_srvs/srv/empty.hpp>
+#include <geometry_msgs/msg/point_stamped.hpp>
+
+#include <filters/filter_chain.hpp>
+
+#include <rclcpp/rclcpp.hpp>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
 
 // STD
 #include <string>
 #include <vector>
 
-namespace traversability_estimation {
-
+namespace traversability_estimation
+{
 /*!
  * The terrain traversability estimation main class. Coordinates the ROS
  * interfaces, the timing, and the data handling between the other classes.
  */
-class TraversabilityEstimation {
- public:
+class TraversabilityEstimation : public rclcpp::Node
+{
+public:
   /*!
    * Constructor.
    * @param nodeHandle the ROS node handle.
    */
-  TraversabilityEstimation(ros::NodeHandle& nodeHandle);
+  explicit TraversabilityEstimation(const rclcpp::NodeOptions& options, const std::string& name);
 
   /*!
    * Destructor.
@@ -56,7 +61,8 @@ class TraversabilityEstimation {
    * @param response the ROS service response.
    * @return true if successful.
    */
-  bool loadElevationMap(grid_map_msgs::ProcessFile::Request& request, grid_map_msgs::ProcessFile::Response& response);
+  bool loadElevationMap(const grid_map_msgs::srv::ProcessFile::Request::SharedPtr request,
+                        grid_map_msgs::srv::ProcessFile::Response::SharedPtr response);
 
   /*!
    * ROS service callback function that forces an update of the traversability map,
@@ -65,7 +71,8 @@ class TraversabilityEstimation {
    * @param response the ROS service response containing the traversability map info.
    * @return true if successful.
    */
-  bool updateServiceCallback(grid_map_msgs::GetGridMapInfo::Request& request, grid_map_msgs::GetGridMapInfo::Response& response);
+  bool updateServiceCallback(const grid_map_msgs::srv::GetGridMapInfo::Request::SharedPtr request,
+                             grid_map_msgs::srv::GetGridMapInfo::Response::SharedPtr response);
 
   /*!
    * ROS service callback function that forces an update of the filter parameters.
@@ -75,7 +82,8 @@ class TraversabilityEstimation {
    * @param response the ROS service response.
    * @return true if successful.
    */
-  bool updateParameter(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
+  bool updateParameter(const std_srvs::srv::Empty::Request::SharedPtr request,
+                       std_srvs::srv::Empty::Response::SharedPtr response);
 
   /*!
    * ROS service callback function to return a boolean to indicate if a path is traversable.
@@ -83,15 +91,16 @@ class TraversabilityEstimation {
    * @param response the ROS service response containing the traversability of the footprint path.
    * @return true if successful.
    */
-  bool checkFootprintPath(traversability_msgs::CheckFootprintPath::Request& request,
-                          traversability_msgs::CheckFootprintPath::Response& response);
+  bool
+  checkFootprintPath(const traversability_msgs::srv::CheckFootprintPath::Request::SharedPtr request,
+                     traversability_msgs::srv::CheckFootprintPath::Response::SharedPtr response);
 
   /*!
    * Callback function that receives an image and converts into
    * an elevation layer of a grid map.
    * @param image the received image.
    */
-  void imageCallback(const sensor_msgs::Image& image);
+  void imageCallback(const sensor_msgs::msg::Image::SharedPtr image);
 
   /*!
    * ROS service callback function that computes the traversability of a footprint
@@ -101,7 +110,8 @@ class TraversabilityEstimation {
    * @param response the ROS service response.
    * @return true if successful.
    */
-  bool traversabilityFootprint(std_srvs::Empty::Request& request, std_srvs::Empty::Response& response);
+  bool traversabilityFootprint(const std_srvs::srv::Empty::Request::SharedPtr request,
+                               std_srvs::srv::Empty::Response::SharedPtr response);
 
   /*!
    * ROS service callback function to return the traversability map (or a submap of it).
@@ -109,7 +119,8 @@ class TraversabilityEstimation {
    * @param response the ROS service response containing the requested (sub-)map.
    * @return true if successful.
    */
-  bool getTraversabilityMap(grid_map_msgs::GetGridMap::Request& request, grid_map_msgs::GetGridMap::Response& response);
+  bool getTraversabilityMap(const grid_map_msgs::srv::GetGridMap::Request::SharedPtr request,
+                            grid_map_msgs::srv::GetGridMap::Response::SharedPtr response);
 
   /*!
    * Saves the traversability map with all layers to a ROS bag.
@@ -117,20 +128,22 @@ class TraversabilityEstimation {
    * @param response the ROS service response.
    * @return true if successful.
    */
-  bool saveToBag(grid_map_msgs::ProcessFile::Request& request, grid_map_msgs::ProcessFile::Response& response);
+  bool saveToBag(const grid_map_msgs::srv::ProcessFile::Request::SharedPtr request,
+                 grid_map_msgs::srv::ProcessFile::Response::SharedPtr response);
 
   /*!
-   * Callback to receive a grid map message that is used to initialize the traversability map, only if it is not already initialized.
+   * Callback to receive a grid map message that is used to initialize the traversability map, only
+   * if it is not already initialized.
    * @param message grid map message to be used to initialize the traversability map.
    */
-  void gridMapToInitTraversabilityMapCallback(const grid_map_msgs::GridMap& message);
+  void gridMapToInitTraversabilityMapCallback(const grid_map_msgs::msg::GridMap::SharedPtr message);
 
- private:
+private:
   /*!
    * Reads and verifies the ROS parameters.
    * @return true if successful.
    */
-  bool readParameters();
+  void readParameters();
 
   /*!
    * Computes the traversability and publishes it as grid map.
@@ -145,36 +158,40 @@ class TraversabilityEstimation {
    * map from a new elevation map requested from the grid map service.
    * @param timerEvent the timer event.
    */
-  void updateTimerCallback(const ros::TimerEvent& timerEvent);
+  void updateTimerCallback();
 
   /*!
    * Gets the grid map for the desired submap center point.
    * @param[out] map the map that is received.
    * @return true if successful, false if ROS service call failed.
    */
-  bool requestElevationMap(grid_map_msgs::GridMap& map);
+  bool requestElevationMap(grid_map_msgs::msg::GridMap& map);
 
   /*!
-   * Initializes a new traversability map based on the given grid map. Previous traversability map is overwritten.
+   * Initializes a new traversability map based on the given grid map. Previous traversability map
+   * is overwritten.
    * @param gridMap grid map object to be used to compute new traversability map.
    * @return true on success.
    */
   bool initializeTraversabilityMapFromGridMap(const grid_map::GridMap& gridMap);
 
-  //! ROS node handle.
-  ros::NodeHandle& nodeHandle_;
+  void init();
 
   //! ROS service server.
-  ros::ServiceServer footprintPathService_;
-  ros::ServiceServer updateTraversabilityService_;
-  ros::ServiceServer getTraversabilityService_;
-  ros::ServiceServer updateParameters_;
-  ros::ServiceServer traversabilityFootprint_;
-  ros::ServiceServer saveToBagService_;
-  ros::ServiceServer loadElevationMapService_;
+  rclcpp::Service<traversability_msgs::srv::CheckFootprintPath>::SharedPtr footprintPathService_;
+  rclcpp::Service<grid_map_msgs::srv::GetGridMapInfo>::SharedPtr updateTraversabilityService_;
+  rclcpp::Service<grid_map_msgs::srv::GetGridMap>::SharedPtr getTraversabilityService_;
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr updateParameters_;
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr traversabilityFootprint_;
+  rclcpp::Service<grid_map_msgs::srv::ProcessFile>::SharedPtr saveToBagService_;
+  rclcpp::Service<grid_map_msgs::srv::ProcessFile>::SharedPtr loadElevationMapService_;
+
+  rclcpp::CallbackGroup::SharedPtr callback_group_;
+  rclcpp::executors::SingleThreadedExecutor callback_group_executor_;
+  std::unique_ptr<std::thread> spinner_;
 
   //! Image subscriber.
-  ros::Subscriber imageSubscriber_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr imageSubscriber_;
   std::string imageTopic_;
   grid_map::GridMap imageGridMap_;
   grid_map::Position imagePosition_;
@@ -184,21 +201,23 @@ class TraversabilityEstimation {
   double imageMaxHeight_;
 
   //! Grid Map topic to initialize traversability map.
-  ros::Subscriber gridMapToInitTraversabilityMapSubscriber_;
+  rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr
+      gridMapToInitTraversabilityMapSubscriber_;
   std::string gridMapToInitTraversabilityMapTopic_;
   bool acceptGridMapToInitTraversabilityMap_;
 
   //! Elevation map service client.
-  ros::ServiceClient submapClient_;
+  rclcpp::Client<grid_map_msgs::srv::GetGridMap>::SharedPtr submapClient_;
 
   //! Name of the elevation submap service.
   std::string submapServiceName_;
 
   //! TF listener.
-  tf::TransformListener transformListener_;
+  std::shared_ptr<tf2_ros::TransformListener> transformListener_;
+  std::shared_ptr<tf2_ros::Buffer> transformBuffer_;
 
   //! Center point of the requested map.
-  geometry_msgs::PointStamped submapPoint_;
+  geometry_msgs::msg::PointStamped submapPoint_;
 
   //! Id of the frame of the robot.
   std::string robotFrameId_;
@@ -210,10 +229,11 @@ class TraversabilityEstimation {
   double footprintYaw_;
 
   //! Timer for the map update.
-  ros::Timer updateTimer_;
+  rclcpp::TimerBase::SharedPtr updateTimer_;
+  rclcpp::TimerBase::SharedPtr initTimer_;
 
   //! Duration between map updates.
-  ros::Duration updateDuration_;
+  double dt_;
 
   //! Requested elevation map layers.
   std::vector<std::string> elevationMapLayers_;
@@ -229,7 +249,7 @@ class TraversabilityEstimation {
   const std::string robotSlopeType_;
 
   //! Traversability map
-  TraversabilityMap traversabilityMap_;
+  std::unique_ptr<TraversabilityMap> traversabilityMap_;
 
   //! Package name where the parameters are defined.
   std::string package_;

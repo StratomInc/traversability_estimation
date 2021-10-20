@@ -9,19 +9,20 @@
 #ifndef ROUGHNESSFILTER_HPP
 #define ROUGHNESSFILTER_HPP
 
-#include <filters/filter_base.h>
+#include <rclcpp/rclcpp.hpp>
+
+#include <filters/filter_base.hpp>
 #include <string>
 
-namespace filters {
-
+namespace filters
+{
 /*!
  * Roughness Filter class to compute the roughness traversability value of an elevation map.
  */
-template<typename T>
+template <typename T>
 class RoughnessFilter : public FilterBase<T>
 {
-
- public:
+public:
   /*!
    * Constructor
    */
@@ -47,8 +48,7 @@ class RoughnessFilter : public FilterBase<T>
    */
   virtual bool update(const T& mapIn, T& mapOut);
 
- private:
-
+private:
   //! Maximum allowed roughness.
   double criticalValue_;
 
@@ -57,8 +57,10 @@ class RoughnessFilter : public FilterBase<T>
 
   //! Roughness map type.
   std::string type_;
+
+  rclcpp::Logger logger_;
 };
 
-} /* namespace */
+}  // namespace filters
 
 #endif

@@ -9,21 +9,20 @@
 #ifndef SLOPEFILTER_HPP
 #define SLOPEFILTER_HPP
 
-#include <filters/filter_base.h>
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
+#include <filters/filter_base.hpp>
 
 #include <string>
 
-namespace filters {
-
+namespace filters
+{
 /*!
  * Slope Filter class to compute the slope traversability value of an elevation map.
  */
-template<typename T>
+template <typename T>
 class SlopeFilter : public FilterBase<T>
 {
-
- public:
+public:
   /*!
    * Constructor
    */
@@ -49,15 +48,16 @@ class SlopeFilter : public FilterBase<T>
    */
   virtual bool update(const T& mapIn, T& mapOut);
 
- private:
-
+private:
   //! Maximum allowed slope.
   double criticalValue_;
 
   //! slope map type.
   std::string type_;
+
+  rclcpp::Logger logger_;
 };
 
-} /* namespace */
+}  // namespace filters
 
 #endif
