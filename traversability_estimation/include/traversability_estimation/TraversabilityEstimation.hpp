@@ -201,8 +201,8 @@ private:
   double imageMaxHeight_;
 
   //! Grid Map topic to initialize traversability map.
-  rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr
-      gridMapToInitTraversabilityMapSubscriber_;
+  rclcpp::Subscription<grid_map_msgs::msg::GridMap>::SharedPtr gridMapSubscriber_;
+  std::shared_ptr<grid_map::GridMap> gridMap_;
   std::string gridMapToInitTraversabilityMapTopic_;
   bool acceptGridMapToInitTraversabilityMap_;
 
@@ -256,6 +256,8 @@ private:
 
   //! Use raw or fused map.
   bool useRawMap_;
+
+  bool useServiceRequest_;
 };
 
 }  // namespace traversability_estimation

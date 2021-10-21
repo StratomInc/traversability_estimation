@@ -257,7 +257,7 @@ bool TraversabilityMap::computeTraversability()
   scopedLockForTraversabilityMap.unlock();
   publishTraversabilityMap();
 
-  RCLCPP_DEBUG(node_->get_logger(), "Traversability map has been updated in %f s.",
+  RCLCPP_ERROR(node_->get_logger(), "Traversability map has been updated in %f s.",
                (node_->now().seconds() - start.seconds()));
   return true;
 }
