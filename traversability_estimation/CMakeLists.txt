@@ -73,12 +73,20 @@ include_directories(
 )
 
 ## Declare a cpp library
-add_library(${PROJECT_NAME}_library SHARED
+add_library(${PROJECT_NAME}_map SHARED
   src/TraversabilityMap.cpp
+)
+ament_target_dependencies(${PROJECT_NAME}_map
+  ${dependencies}
+)
+add_library(${PROJECT_NAME}_library SHARED
   src/TraversabilityEstimation.cpp
 )
 ament_target_dependencies(${PROJECT_NAME}_library
   ${dependencies}
+)
+target_link_libraries(${PROJECT_NAME}_library
+  ${PROJECT_NAME}_map
 )
 rclcpp_components_register_nodes(${PROJECT_NAME}_library "traversability_estimation::TraversabilityEstimation")
 
@@ -103,7 +111,7 @@ target_link_libraries(${PROJECT_NAME}
 # See http://ros.org/doc/api/catkin/html/adv_user_guide/variables.html
 
 ## Mark executables and/or libraries for installation
-install(TARGETS ${PROJECT_NAME}_library ${PROJECT_NAME}
+install(TARGETS ${PROJECT_NAME}_map ${PROJECT_NAME}_library ${PROJECT_NAME}
   ARCHIVE DESTINATION lib 
   LIBRARY DESTINATION lib 
   RUNTIME DESTINATION lib/${PROJECT_NAME}

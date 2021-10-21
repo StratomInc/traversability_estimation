@@ -294,7 +294,8 @@ bool TraversabilityEstimation::updateTraversability()
   {
     if (!requestElevationMap(elevationMap))
     {
-      RCLCPP_WARN(this->get_logger(), "Failed to retrieve elevation grid map.");
+      auto& clk = *this->get_clock();
+      RCLCPP_WARN_THROTTLE(this->get_logger(), clk, 5000, "Failed to retrieve elevation grid map.");
       return false;
     }
 
