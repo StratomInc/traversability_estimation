@@ -16,8 +16,7 @@ int main(int argc, char** argv)
   rclcpp::executors::MultiThreadedExecutor exec;
 
   rclcpp::NodeOptions options;
-  auto node = std::make_shared<traversability_estimation::TraversabilityEstimation>(
-      options, "traversability_estimation");
+  auto node = std::make_shared<traversability_estimation::TraversabilityEstimation>(options);
 
   exec.add_node(node);
   exec.spin();

@@ -47,7 +47,7 @@ public:
    * Constructor.
    * @param nodeHandle the ROS node handle.
    */
-  explicit TraversabilityEstimation(const rclcpp::NodeOptions& options, const std::string& name);
+  explicit TraversabilityEstimation(const rclcpp::NodeOptions& options);
 
   /*!
    * Destructor.

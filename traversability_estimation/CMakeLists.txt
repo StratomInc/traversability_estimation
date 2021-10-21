@@ -80,6 +80,7 @@ add_library(${PROJECT_NAME}_library SHARED
 ament_target_dependencies(${PROJECT_NAME}_library
   ${dependencies}
 )
+rclcpp_components_register_nodes(${PROJECT_NAME}_library "traversability_estimation::TraversabilityEstimation")
 
 ## Declare a cpp executable
 add_executable(${PROJECT_NAME}

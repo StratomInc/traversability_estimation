@@ -19,9 +19,8 @@ using namespace std;
 
 namespace traversability_estimation
 {
-TraversabilityEstimation::TraversabilityEstimation(const rclcpp::NodeOptions& options,
-                                                   const std::string& name)
-  : rclcpp::Node(name, options)
+TraversabilityEstimation::TraversabilityEstimation(const rclcpp::NodeOptions& options)
+  : rclcpp::Node("traversability_estimation", options)
   , acceptGridMapToInitTraversabilityMap_(false)
   , traversabilityType_("traversability")
   , slopeType_("traversability_slope")
@@ -497,3 +496,7 @@ void TraversabilityEstimation::gridMapToInitTraversabilityMapCallback(
 }
 
 }  // namespace traversability_estimation
+
+#include "rclcpp_components/register_node_macro.hpp"
+
+RCLCPP_COMPONENTS_REGISTER_NODE(traversability_estimation::TraversabilityEstimation)
