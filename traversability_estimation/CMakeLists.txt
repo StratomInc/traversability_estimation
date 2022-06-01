@@ -32,6 +32,7 @@ find_package(std_srvs REQUIRED)
 find_package(example_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(rclcpp_components REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 find_package(Eigen3 REQUIRED)
@@ -62,6 +63,7 @@ set(dependencies
   grid_map_msgs
   grid_map_filters
   nav2_costmap_2d
+  rclcpp_components
 )
 
 ## Specify additional locations of header files
